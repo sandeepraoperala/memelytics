@@ -14,7 +14,7 @@ if (typeof window === "undefined") {
   }
 }
 
-let cached = typeof window === "undefined" ? global.mongoose : null;
+const cached = typeof window === "undefined" ? global.mongoose : null;
 
 async function dbConnect() {
   if (typeof window !== "undefined") {

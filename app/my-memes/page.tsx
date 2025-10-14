@@ -1,25 +1,27 @@
-// app/my-memes/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useWalletAuth } from "../../lib/auth";
 import { useAppKit } from "@reown/appkit/react";
 import { AppKitButton } from "@reown/appkit/react";
 import Image from "next/image";
 
+interface Meme {
+  _id: string;
+  imageUrl: string;
+  tags: string[];
+  downloads: number;
+  shares: number;
+}
+
 export default function MyMemesPage() {
   const { address, isConnected, ensureUser, disconnectWallet } =
     useWalletAuth("/");
   const { open } = useAppKit();
-  const [memes, setMemes] = useState([]);
+  const [memes, setMemes] = useState<Meme[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!address) return;
-    fetchMemes();
-  }, [address]);
-
-  const fetchMemes = async () => {
+  const fetchMemes = useCallback(async () => {
     try {
       await ensureUser();
       const response = await fetch(`/api/memes/user/${address}`);
@@ -34,7 +36,12 @@ export default function MyMemesPage() {
       console.error("Fetch memes error:", error);
       setError("Error fetching memes");
     }
-  };
+  }, [address, ensureUser]);
+
+  useEffect(() => {
+    if (!address) return;
+    fetchMemes();
+  }, [address, fetchMemes]);
 
   const downloadMeme = async (imageUrl: string, memeId: string) => {
     try {
@@ -129,9 +136,15 @@ export default function MyMemesPage() {
       <section className="masonry-wrap">
         <div className="meme-grid">
           {memes.length === 0 && !error && <p>No memes found</p>}
-          {memes.map((meme: any) => (
+          {memes.map((meme: Meme) => (
             <div key={meme._id} className="meme-item">
-              <img src={meme.imageUrl} alt="My Meme" />
+              <Image
+                src={meme.imageUrl}
+                alt="My Meme"
+                width={300} // Adjust based on your design
+                height={300} // Adjust based on your design
+                style={{ objectFit: "cover" }}
+              />
               <div className="meme-actions">
                 <button onClick={() => downloadMeme(meme.imageUrl, meme._id)}>
                   Download

@@ -1,7 +1,6 @@
 // app/api/users/route.ts
 import { NextResponse } from "next/server";
 import dbConnect from "../../../lib/mongodb";
-import { ObjectId } from "mongodb";
 
 export async function POST(request: Request) {
   try {

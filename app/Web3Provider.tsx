@@ -20,7 +20,7 @@ const queryClient = new QueryClient();
 const projectId = process.env.NEXT_PUBLIC_REOWN_PROJECT_ID || "your-project-id";
 
 // Set the networks
-const networks = [mainnet, arbitrum, polygon, base, optimism];
+const networks: any = [mainnet, arbitrum, polygon, base, optimism];
 
 // Create metadata
 const metadata = {

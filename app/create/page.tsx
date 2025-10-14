@@ -1,6 +1,7 @@
 // app/create/page.tsx
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useWalletAuth } from "../../lib/auth";
 import { useAppKit } from "@reown/appkit/react";
@@ -47,7 +48,12 @@ export default function CreatePage() {
       <header className="header">
         <div className="left-header">
           <div className="logo">
-            <img src="/logo.png" alt="Memelytics logo" />
+            <Image
+              src="/logo.png"
+              alt="Memelytics logo"
+              width={80}
+              height={80}
+            />
           </div>
         </div>
         <div className="header-buttons">
@@ -70,7 +76,7 @@ export default function CreatePage() {
           onClick={() => handleNavigation("meme")}
           style={{ cursor: "pointer" }}
         >
-          <img src="/make.png" alt="Make a Meme" />
+          <Image src="/make.png" alt="Make a Meme" width={120} height={120} />
           <span>Make a Meme</span>
         </div>
         <div
@@ -78,7 +84,7 @@ export default function CreatePage() {
           onClick={() => handleNavigation("gif")}
           style={{ cursor: "pointer" }}
         >
-          <img src="/gif.png" alt="Make a GIF" />
+          <Image src="/gif.png" alt="Make a GIF" width={120} height={120} />
           <span>Make a GIF</span>
         </div>
         <div
@@ -86,7 +92,7 @@ export default function CreatePage() {
           onClick={() => handleNavigation("ai")}
           style={{ cursor: "pointer" }}
         >
-          <img src="/meme.png" alt="AI Meme" />
+          <Image src="/meme.png" alt="AI Meme" width={120} height={120} />
           <span>AI Meme (Coming Soon)</span>
         </div>
       </div>
@@ -95,15 +101,17 @@ export default function CreatePage() {
         <h2>Top Used Template</h2>
         <div className="template-grid">
           {templates.map((src, i) => (
-            <img
+            <Image
               key={i}
               src={src}
               alt={`Template ${i + 1}`}
+              width={200}
+              height={200}
               onClick={async () => {
                 await ensureUser();
                 router.push(`/generate?type=meme&template=${src}`);
               }}
-              style={{ cursor: "pointer" }}
+              style={{ cursor: "pointer", borderRadius: "8px" }}
             />
           ))}
         </div>

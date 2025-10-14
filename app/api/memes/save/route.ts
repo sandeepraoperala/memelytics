@@ -4,7 +4,6 @@ import dbConnect from "../../../../lib/mongodb";
 import fs from "fs/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
-import { ObjectId } from "mongodb";
 
 const uploadDir = path.join(process.cwd(), "public/uploads");
 

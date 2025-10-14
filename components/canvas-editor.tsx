@@ -159,12 +159,7 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
     // Selection and dragging
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
-    const draggingRef = useRef<{
-      id: string;
-      offsetX: number;
-      offsetY: number;
-    } | null>(null);
-    // Tool system, strokes
+
     const [activeTool, setActiveTool] = useState<Tool>("none");
     const [brushColor, setBrushColor] = useState<string>("#111111");
     const [brushSize, setBrushSize] = useState<number>(6);
@@ -632,7 +627,7 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
             const t = state.texts.find((x) => x.id === tf.id);
             if (!t || tf.initialW == null || tf.initialSize == null) return;
             // scale size proportionally by delta to bottom-right
-            const { w, h } = measureText(t);
+            const { h } = measureText(t);
             const scale = Math.max(
               0.2,
               Math.min(
