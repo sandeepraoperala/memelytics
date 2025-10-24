@@ -1,3 +1,4 @@
+// app/api/memes/update/[memeId]/route.ts
 import { NextResponse, NextRequest } from "next/server";
 import dbConnect from "../../../../../lib/mongodb";
 import { ObjectId } from "mongodb";

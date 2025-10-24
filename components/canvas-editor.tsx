@@ -1,4 +1,5 @@
 "use client";
+
 import type React from "react";
 import {
   useCallback,
@@ -40,63 +41,60 @@ type ImageItem = {
   h: number;
 };
 
-type Tool =
-  | "none"
-  | "rotate"
-  | "text"
-  | "draw"
-  | "space"
-  | "download"
-  | "image";
+type Tool = "none" | "rotate" | "text" | "draw" | "download" | "image";
 
 type EditorState = {
   rotationDeg: number;
-  padding: { top: number; right: number; bottom: number; left: number };
   bgColor: string;
   texts: TextItem[];
   strokes: Stroke[];
-  images: ImageItem[]; // new: overlay image layers
+  images: ImageItem[];
 };
 
 export type CanvasEditorHandle = {
   openBasePicker: () => void;
   openImagesPicker: () => void;
   setTool: (tool: Tool) => void;
+  setBrushColor: (color: string) => void;
+  setBrushSize: (size: number) => void;
   addText: () => void;
+  updateText: (id: string, partial: Partial<TextItem>) => void;
+  removeText: (id: string) => void;
+  clearStrokes: () => void;
   rotateBy: (delta: number) => void;
-  addSpace: () => void;
   undo: () => void;
   redo: () => void;
   downloadPNG: () => void;
   downloadJPEG: () => void;
-  loadTemplate: (url: string) => void; // Added for template loading
-  getDataURL: (type: "png" | "jpeg") => string; // Added to get dataURL for API save
+  loadTemplate: (url: string) => void;
+  getDataURL: (type: "png" | "jpeg") => string;
+  scaleImage: (id: string, factor: number) => void;
+  bringForwardImage: (id: string) => void;
+  sendBackwardImage: (id: string) => void;
+  resetImageSize: (id: string) => void;
+  getSelectedText: () => TextItem | null;
+  getSelectedImage: () => ImageItem | null;
+  removeImage: (id: string) => void;
 };
 
 type CanvasEditorProps = {
   controls?: "internal" | "external";
+  onTemplateLoad?: () => void;
 };
 
 const defaultState: EditorState = {
   rotationDeg: 0,
-  padding: { top: 20, right: 20, bottom: 20, left: 20 },
   bgColor: "#ffffff",
   texts: [],
   strokes: [],
-  images: [], // initialize images
+  images: [],
 };
+
+const FIXED_CANVAS_WIDTH = 800;
+const FIXED_CANVAS_HEIGHT = 600;
 
 function radians(deg: number) {
   return (deg * Math.PI) / 180;
-}
-
-function rotatedBounds(w: number, h: number, angleRad: number) {
-  const cos = Math.abs(Math.cos(angleRad));
-  const sin = Math.abs(Math.sin(angleRad));
-  return {
-    width: w * cos + h * sin,
-    height: w * sin + h * cos,
-  };
 }
 
 function uid() {
@@ -104,15 +102,14 @@ function uid() {
 }
 
 const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
-  function CanvasEditor({ controls = "internal" }, ref) {
-    // Image
+  function CanvasEditor({ controls = "internal", onTemplateLoad }, ref) {
     const [image, setImage] = useState<HTMLImageElement | null>(null);
     const [imageNatural, setImageNatural] = useState<{
       w: number;
       h: number;
     } | null>(null);
-    // Editor state + history
     const [state, setState] = useState<EditorState>(defaultState);
+    const [editingTextId, setEditingTextId] = useState<string | null>(null);
     const historyRef = useRef<EditorState[]>([defaultState]);
     const historyIndexRef = useRef<number>(0);
     const pushHistory = useCallback((next: EditorState) => {
@@ -137,29 +134,19 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       setState(historyRef.current[historyIndexRef.current]);
     }, [canRedo]);
     const reset = useCallback(() => {
-      const base: EditorState = {
-        rotationDeg: 0,
-        padding: { top: 20, right: 20, bottom: 20, left: 20 },
-        bgColor: "#ffffff",
-        texts: [],
-        strokes: [],
-        images: [], // reset images
-      };
+      const base: EditorState = defaultState;
       historyRef.current = [base];
       historyIndexRef.current = 0;
       setState(base);
       setSelectedTextId(null);
-      setSelectedImageId(null); //
-      setActiveTool("none");
+      setSelectedImageId(null);
+      setEditingTextId(null);
     }, []);
-    // Canvas refs
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const baseInputRef = useRef<HTMLInputElement | null>(null);
     const imagesInputRef = useRef<HTMLInputElement | null>(null);
-    // Selection and dragging
     const [selectedTextId, setSelectedTextId] = useState<string | null>(null);
     const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
-
     const [activeTool, setActiveTool] = useState<Tool>("none");
     const [brushColor, setBrushColor] = useState<string>("#111111");
     const [brushSize, setBrushSize] = useState<number>(6);
@@ -172,29 +159,33 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
     const transformRef = useRef<null | {
       mode: "drag" | "rotate" | "resize";
       id: string;
-      target?: "text" | "image"; // track target type
-      // drag offsets
+      target?: "text" | "image";
       offsetX?: number;
       offsetY?: number;
-      // rotate
       centerX?: number;
       centerY?: number;
       startAngleDeg?: number;
       initialRotationDeg?: number;
-      // resize
       initialW?: number;
       initialH?: number;
       initialSize?: number;
     }>(null);
+
     const contentSize = useMemo(() => {
-      if (!imageNatural) return { w: 0, h: 0 };
-      const w = imageNatural.w + state.padding.left + state.padding.right;
-      const h = imageNatural.h + state.padding.top + state.padding.bottom;
-      return { w, h };
-    }, [imageNatural, state.padding]);
+      if (!imageNatural)
+        return { w: FIXED_CANVAS_WIDTH, h: FIXED_CANVAS_HEIGHT };
+      return { w: imageNatural.w, h: imageNatural.h };
+    }, [imageNatural]);
+
+    const getImageBounds = useCallback(() => {
+      if (!imageNatural)
+        return { x: 0, y: 0, w: FIXED_CANVAS_WIDTH, h: FIXED_CANVAS_HEIGHT };
+      return { x: 0, y: 0, w: imageNatural.w, h: imageNatural.h };
+    }, [imageNatural]);
+
     const onFileChange = useCallback(
       (e: React.ChangeEvent<HTMLInputElement>) => {
-        const inputEl = e.currentTarget; // capture ref to avoid synthetic event nulling
+        const inputEl = e.currentTarget;
         const file = inputEl.files?.[0];
         if (!file) {
           if (baseInputRef.current) baseInputRef.current.value = "";
@@ -206,20 +197,8 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
         img.onload = () => {
           setImage(img);
           setImageNatural({ w: img.naturalWidth, h: img.naturalHeight });
-          const base: EditorState = {
-            rotationDeg: 0,
-            padding: { top: 20, right: 20, bottom: 20, left: 20 },
-            bgColor: "#ffffff",
-            texts: [],
-            strokes: [],
-            images: [], //
-          };
-          historyRef.current = [base];
-          historyIndexRef.current = 0;
-          setState(base);
-          setSelectedTextId(null);
-          setSelectedImageId(null); //
-          setActiveTool("none");
+          reset();
+          onTemplateLoad?.();
           URL.revokeObjectURL(url);
           if (baseInputRef.current) baseInputRef.current.value = "";
         };
@@ -229,42 +208,34 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
         };
         img.src = url;
       },
-      []
+      [reset, onTemplateLoad]
     );
-    const loadTemplate = useCallback((url: string) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        setImage(img);
-        setImageNatural({ w: img.naturalWidth, h: img.naturalHeight });
-        const base: EditorState = {
-          rotationDeg: 0,
-          padding: { top: 20, right: 20, bottom: 20, left: 20 },
-          bgColor: "#ffffff",
-          texts: [],
-          strokes: [],
-          images: [], //
+
+    const loadTemplate = useCallback(
+      (url: string) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          setImage(img);
+          setImageNatural({ w: img.naturalWidth, h: img.naturalHeight });
+          reset();
+          onTemplateLoad?.();
         };
-        historyRef.current = [base];
-        historyIndexRef.current = 0;
-        setState(base);
-        setSelectedTextId(null);
-        setSelectedImageId(null); //
-        setActiveTool("none");
-      };
-      img.onerror = () => {
-        console.error("Failed to load template:", url);
-      };
-      img.src = url;
-    }, []);
+        img.onerror = () => {
+          console.error("Failed to load template:", url);
+        };
+        img.src = url;
+      },
+      [reset, onTemplateLoad]
+    );
+
     const addText = useCallback(() => {
-      if (!imageNatural) return;
       const id = uid();
       const newText: TextItem = {
         id,
-        text: "Add Text Here",
-        x: Math.round(imageNatural.w / 2 - 40),
-        y: Math.round(imageNatural.h / 2),
+        text: "",
+        x: contentSize.w / 2,
+        y: contentSize.h / 2,
         size: 20,
         color: "#000",
         font: "Fredoka One",
@@ -273,30 +244,40 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       const next = { ...state, texts: [...state.texts, newText] };
       pushHistory(next);
       setSelectedTextId(id);
-    }, [imageNatural, pushHistory, state]);
-    const updateSelectedText = useCallback(
-      (partial: Partial<TextItem>) => {
-        if (!selectedTextId) return;
+      setEditingTextId(id);
+    }, [pushHistory, state, contentSize]);
+
+    const updateText = useCallback(
+      (id: string, partial: Partial<TextItem>) => {
         const nextTexts = state.texts.map((t) =>
-          t.id === selectedTextId ? { ...t, ...partial } : t
+          t.id === id ? { ...t, ...partial } : t
         );
         pushHistory({ ...state, texts: nextTexts });
+        setSelectedTextId(id);
+      },
+      [pushHistory, state]
+    );
+
+    const removeText = useCallback(
+      (id: string) => {
+        const next = {
+          ...state,
+          texts: state.texts.filter((t) => t.id !== id),
+        };
+        pushHistory(next);
+        if (selectedTextId === id) {
+          setSelectedTextId(null);
+          setEditingTextId(null);
+        }
       },
       [pushHistory, selectedTextId, state]
     );
-    const removeSelectedText = useCallback(() => {
-      if (!selectedTextId) return;
-      const next = {
-        ...state,
-        texts: state.texts.filter((t) => t.id !== selectedTextId),
-      };
-      pushHistory(next);
-      setSelectedTextId(null);
-    }, [pushHistory, selectedTextId, state]);
+
     const clearStrokes = useCallback(() => {
       const next = { ...state, strokes: [] };
       pushHistory(next);
     }, [pushHistory, state]);
+
     const rotateBy = useCallback(
       (delta: number) => {
         const next = {
@@ -307,71 +288,131 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       },
       [pushHistory, state]
     );
-    const updatePadding = useCallback(
-      (side: keyof EditorState["padding"], value: number) => {
-        const v = Math.max(0, Math.min(2000, Math.round(value)));
-        const next = { ...state, padding: { ...state.padding, [side]: v } };
-        pushHistory(next);
+
+    const scaleImage = useCallback(
+      (id: string, factor: number) => {
+        const it = state.images.find((x) => x.id === id);
+        if (!it) return;
+        const newW = Math.max(16, Math.round(it.w * factor));
+        const newH = Math.max(16, Math.round(it.h * factor));
+        const clampedW = Math.min(newW, contentSize.w - it.x);
+        const clampedH = Math.min(newH, contentSize.h - it.y);
+        const nextImages = state.images.map((x) =>
+          x.id === id ? { ...x, w: clampedW, h: clampedH } : x
+        );
+        pushHistory({ ...state, images: nextImages });
+      },
+      [pushHistory, state, contentSize]
+    );
+
+    const bringForwardImage = useCallback(
+      (id: string) => {
+        const idx = state.images.findIndex((i) => i.id === id);
+        if (idx < 0 || idx === state.images.length - 1) return;
+        const arr = [...state.images];
+        const [item] = arr.splice(idx, 1);
+        arr.push(item);
+        pushHistory({ ...state, images: arr });
       },
       [pushHistory, state]
     );
-    const addSpace = useCallback(() => {
-      updatePadding("bottom", state.padding.bottom + 50);
-    }, [state.padding.bottom, updatePadding]);
+
+    const sendBackwardImage = useCallback(
+      (id: string) => {
+        const idx = state.images.findIndex((i) => i.id === id);
+        if (idx <= 0) return;
+        const arr = [...state.images];
+        const [item] = arr.splice(idx, 1);
+        arr.unshift(item);
+        pushHistory({ ...state, images: arr });
+      },
+      [pushHistory, state]
+    );
+
+    const resetImageSize = useCallback(
+      (id: string) => {
+        const it = state.images.find((i) => i.id === id);
+        if (!it) return;
+        const el = imageMapRef.current.get(it.id);
+        const natW = el?.naturalWidth || it.w;
+        const natH = el?.naturalHeight || it.h;
+        const scale = Math.min(
+          (contentSize.w - it.x) / natW,
+          (contentSize.h - it.y) / natH,
+          1
+        );
+        const newW = Math.min(Math.round(natW * scale), contentSize.w - it.x);
+        const newH = Math.min(Math.round(natH * scale), contentSize.h - it.y);
+        const nextImages = state.images.map((x) =>
+          x.id === id ? { ...x, w: newW, h: newH } : x
+        );
+        pushHistory({ ...state, images: nextImages });
+      },
+      [pushHistory, state, contentSize]
+    );
+
+    const removeImage = useCallback(
+      (id: string) => {
+        const next = {
+          ...state,
+          images: state.images.filter((i) => i.id !== id),
+        };
+        pushHistory(next);
+        if (selectedImageId === id) setSelectedImageId(null);
+      },
+      [pushHistory, selectedImageId, state]
+    );
+
     const getContentPointFromClient = useCallback(
       (clientX: number, clientY: number) => {
         const canvas = canvasRef.current;
-        if (!canvas || !imageNatural) return null;
+        if (!canvas) return null;
         const rect = canvas.getBoundingClientRect();
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
-        // map client to canvas pixel space
+        const scaleX = contentSize.w / rect.width;
+        const scaleY = contentSize.h / rect.height;
         const px = (clientX - rect.left) * scaleX;
         const py = (clientY - rect.top) * scaleY;
-        // inverse rotate around canvas center
         const angle = radians(state.rotationDeg);
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
+        const centerX = contentSize.w / 2;
+        const centerY = contentSize.h / 2;
         const dx = px - centerX;
         const dy = py - centerY;
         const cos = Math.cos(-angle);
         const sin = Math.sin(-angle);
         const rx = dx * cos - dy * sin;
         const ry = dx * sin + dy * cos;
-        const { w: cw, h: ch } = contentSize;
-        const cx = rx + cw / 2;
-        const cy = ry + ch / 2;
+        const cx = rx + contentSize.w / 2;
+        const cy = ry + contentSize.h / 2;
         return { x: cx, y: cy };
       },
-      [contentSize, imageNatural, state.rotationDeg]
+      [state.rotationDeg, contentSize]
     );
+
     const measureText = useCallback((t: TextItem) => {
       const ctx = document.createElement("canvas").getContext("2d");
       if (!ctx) return { w: 0, h: t.size };
       ctx.font = `${t.size}px ${t.font}`;
-      const w = ctx.measureText(t.text).width;
+      const w = ctx.measureText(t.text || " ").width;
       const h = t.size;
       return { w, h };
     }, []);
+
     const hitTestTextLocal = useCallback(
       (pt: { x: number; y: number }, t: TextItem) => {
         const { w, h } = measureText(t);
         const cx = t.x + w / 2;
         const cy = t.y - h / 2;
         const angle = radians(t.rotationDeg ?? 0);
-        // transform to local coordinates (unrotate)
         const dx = pt.x - cx;
         const dy = pt.y - cy;
         const cos = Math.cos(-angle);
         const sin = Math.sin(-angle);
         const lx = dx * cos - dy * sin;
         const ly = dx * sin + dy * cos;
-        // local bbox: [-w/2, -h/2] .. [w/2, h/2]
         const within =
           lx >= -w / 2 && lx <= w / 2 && ly >= -h / 2 && ly <= h / 2;
-        // handles
         const rotateHandle = { x: 0, y: -h / 2 - 16, r: 8 };
-        const resizeHandle = { x: w / 2, y: h / 2, r: 10 }; // square-ish area
+        const resizeHandle = { x: w / 2, y: h / 2, r: 10 };
         const isOnRotate =
           Math.hypot(lx - rotateHandle.x, ly - rotateHandle.y) <=
           rotateHandle.r;
@@ -382,9 +423,9 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       },
       [measureText]
     );
+
     const hitTestImage = useCallback(
       (pt: { x: number; y: number }) => {
-        // top-most (last) wins
         for (let i = state.images.length - 1; i >= 0; i--) {
           const it = state.images[i];
           const within =
@@ -403,9 +444,9 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       },
       [state.images]
     );
+
     const onCanvasPointerDown = useCallback(
       (e: React.PointerEvent<HTMLCanvasElement>) => {
-        if (!imageNatural) return;
         const pt = getContentPointFromClient(e.clientX, e.clientY);
         if (!pt) return;
         if (activeTool === "image") {
@@ -437,7 +478,6 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
           return;
         }
         if (activeTool === "text") {
-          // check top-most text (last drawn is top-most)
           let hit: { id: string } | null = null;
           let hitKind: "drag" | "rotate" | "resize" | null = null;
           let hitData: ReturnType<typeof hitTestTextLocal> | null = null;
@@ -464,11 +504,11 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
             }
           }
           setSelectedTextId(hit?.id ?? null);
+          setEditingTextId(hit?.id ?? null);
           if (hit && hitKind && hitData) {
             const t = state.texts.find((x) => x.id === hit.id)!;
             const { cx, cy, w, h } = hitData;
             if (hitKind === "drag") {
-              // store offset in local unrotated box coordinates -> convert to world offset
               const offsetX = pt.x - t.x;
               const offsetY = pt.y - (t.y - h);
               transformRef.current = {
@@ -499,7 +539,6 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
             }
             (e.target as Element).setPointerCapture(e.pointerId);
           } else {
-            // empty area
             transformRef.current = null;
           }
         } else if (activeTool === "draw") {
@@ -515,7 +554,9 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
           (e.target as Element).setPointerCapture(e.pointerId);
         } else {
           setSelectedTextId(null);
-          setSelectedImageId(null); //
+          setSelectedImageId(null);
+          setEditingTextId(null);
+          transformRef.current = null;
         }
       },
       [
@@ -524,31 +565,29 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
         brushSize,
         getContentPointFromClient,
         hitTestTextLocal,
-        imageNatural,
         state.texts,
-        hitTestImage, //
-        state.images, //
+        hitTestImage,
+        state.images,
       ]
     );
+
     const onCanvasPointerMove = useCallback(
       (e: React.PointerEvent<HTMLCanvasElement>) => {
         const pt = getContentPointFromClient(e.clientX, e.clientY);
         if (!pt) return;
         if (activeTool === "image") {
           const tf = transformRef.current;
-          if (!tf) return;
-          if (tf.target !== "image") return;
+          if (!tf || tf.target !== "image") return;
           if (tf.mode === "drag") {
             const it = state.images.find((x) => x.id === tf.id);
             if (!it) return;
-            const { w: cw, h: ch } = contentSize;
             const newX = Math.max(
               0,
-              Math.min(cw - it.w, pt.x - (tf.offsetX ?? 0))
+              Math.min(contentSize.w - it.w, pt.x - (tf.offsetX ?? 0))
             );
             const newY = Math.max(
               0,
-              Math.min(ch - it.h, pt.y - (tf.offsetY ?? 0))
+              Math.min(contentSize.h - it.h, pt.y - (tf.offsetY ?? 0))
             );
             setState((prev) => ({
               ...prev,
@@ -563,7 +602,6 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
             if (!it || tf.initialW == null || tf.initialH == null) return;
             const startW = tf.initialW;
             const startH = tf.initialH;
-            // uniform scale by delta from top-left to pointer
             const dx = Math.max(16, pt.x - it.x);
             const dy = Math.max(16, pt.y - it.y);
             const scale = Math.max(
@@ -572,9 +610,8 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
             );
             const newW = Math.max(16, Math.round(startW * scale));
             const newH = Math.max(16, Math.round(startH * scale));
-            const { w: cw, h: ch } = contentSize;
-            const clampedW = Math.min(newW, cw - it.x);
-            const clampedH = Math.min(newH, ch - it.y);
+            const clampedW = Math.min(newW, contentSize.w - it.x);
+            const clampedH = Math.min(newH, contentSize.h - it.y);
             setState((prev) => ({
               ...prev,
               images: prev.images.map((x) =>
@@ -589,15 +626,15 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
           if (!tf) return;
           if (tf.mode === "drag") {
             const t = state.texts.find((x) => x.id === tf.id);
-            if (!t || !imageNatural) return;
+            if (!t) return;
             const h = t.size;
             const newX = Math.max(
               0,
-              Math.min(imageNatural.w, pt.x - (tf.offsetX ?? 0))
+              Math.min(contentSize.w, pt.x - (tf.offsetX ?? 0))
             );
             const newY = Math.max(
               h,
-              Math.min(imageNatural.h, pt.y - (tf.offsetY ?? 0) + h)
+              Math.min(contentSize.h, pt.y - (tf.offsetY ?? 0) + h)
             );
             setState((prev) => ({
               ...prev,
@@ -626,7 +663,6 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
           if (tf.mode === "resize") {
             const t = state.texts.find((x) => x.id === tf.id);
             if (!t || tf.initialW == null || tf.initialSize == null) return;
-            // scale size proportionally by delta to bottom-right
             const { h } = measureText(t);
             const scale = Math.max(
               0.2,
@@ -662,38 +698,23 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       },
       [
         activeTool,
-        contentSize,
         getContentPointFromClient,
-        imageNatural,
         measureText,
         state.images,
         state.texts,
+        contentSize,
       ]
     );
+
     const onCanvasPointerUp = useCallback(
       (e: React.PointerEvent<HTMLCanvasElement>) => {
-        if (activeTool === "image") {
-          if (transformRef.current) {
+        if (
+          activeTool === "image" ||
+          activeTool === "text" ||
+          activeTool === "draw"
+        ) {
+          if (transformRef.current || drawingRef.current) {
             transformRef.current = null;
-            pushHistory(stateRef.current);
-            try {
-              (e.target as Element).releasePointerCapture(e.pointerId);
-            } catch {}
-          }
-          return;
-        }
-        if (activeTool === "text") {
-          if (transformRef.current) {
-            transformRef.current = null;
-            pushHistory(stateRef.current);
-            try {
-              (e.target as Element).releasePointerCapture(e.pointerId);
-            } catch {}
-          }
-          return;
-        }
-        if (activeTool === "draw") {
-          if (drawingRef.current) {
             drawingRef.current = null;
             pushHistory(stateRef.current);
             try {
@@ -704,18 +725,15 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       },
       [activeTool, pushHistory]
     );
+
     const onAddImages = useCallback(
       (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!imageNatural) {
-          if (imagesInputRef.current) imagesInputRef.current.value = "";
-          return;
-        }
         const files = e.currentTarget.files;
         if (!files || files.length === 0) {
           if (imagesInputRef.current) imagesInputRef.current.value = "";
           return;
         }
-        const inputEl = e.currentTarget; // capture safely
+        const inputEl = e.currentTarget;
         const toLoad: Promise<ImageItem | null>[] = [];
         for (const file of Array.from(files)) {
           const url = URL.createObjectURL(file);
@@ -724,9 +742,8 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
               const img = new Image();
               img.crossOrigin = "anonymous";
               img.onload = () => {
-                // place centered at 50% size (clamped)
-                const maxW = imageNatural.w;
-                const maxH = imageNatural.h;
+                const maxW = contentSize.w;
+                const maxH = contentSize.h;
                 const scale = Math.min(
                   maxW / img.naturalWidth,
                   maxH / img.naturalHeight,
@@ -746,8 +763,8 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
                 }
                 const id = uid();
                 imageMapRef.current.set(id, img);
-                const x = Math.round(state.padding.left + (maxW - w) / 2);
-                const y = Math.round(state.padding.top + (maxH - h) / 2);
+                const x = Math.round((maxW - w) / 2);
+                const y = Math.round((maxH - h) / 2);
                 URL.revokeObjectURL(url);
                 resolve({ id, src: "", x, y, w, h });
               };
@@ -771,128 +788,131 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
           if (inputEl) inputEl.value = "";
         });
       },
-      [imageNatural, pushHistory, state, imageMapRef, state?.padding]
+      [pushHistory, state, contentSize]
     );
+
     const drawBaseCanvas = useCallback(
       (drawGuides: boolean) => {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
+        canvas.width = contentSize.w;
+        canvas.height = contentSize.h;
+        ctx.fillStyle = "#f8f8f8";
+        ctx.fillRect(0, 0, contentSize.w, contentSize.h);
         if (!image || !imageNatural) {
-          const w = 500;
-          const h = 500;
-          canvas.width = w;
-          canvas.height = h;
-          ctx.clearRect(0, 0, w, h);
-          const size = 16;
-          for (let y = 0; y < h; y += size) {
-            for (let x = 0; x < w; x += size) {
-              ctx.fillStyle =
-                ((x / size + y / size) | 0) % 2 ? "#f3f3f3" : "#e8e8e8";
-              ctx.fillRect(x, y, size, size);
-            }
-          }
           ctx.fillStyle = "#666666";
           ctx.font = "14px Fredoka One";
           ctx.fillText("Upload an image or GIF to start", 16, 28);
           return;
         }
-        const angle = radians(state.rotationDeg);
-        const { w: cw, h: ch } = contentSize;
-        const off = document.createElement("canvas");
-        off.width = Math.max(1, cw);
-        off.height = Math.max(1, ch);
-        const offCtx = off.getContext("2d")!;
-        offCtx.fillStyle = state.bgColor;
-        offCtx.fillRect(0, 0, off.width, off.height);
-        offCtx.drawImage(image, state.padding.left, state.padding.top);
+        ctx.save();
+        ctx.translate(contentSize.w / 2, contentSize.h / 2);
+        ctx.rotate(radians(state.rotationDeg));
+        ctx.fillStyle = state.bgColor;
+        ctx.fillRect(
+          -contentSize.w / 2,
+          -contentSize.h / 2,
+          contentSize.w,
+          contentSize.h
+        );
+        const { x, y, w, h } = getImageBounds();
+        ctx.drawImage(
+          image,
+          x - contentSize.w / 2,
+          y - contentSize.h / 2,
+          w,
+          h
+        );
         for (const it of state.images) {
           const el = imageMapRef.current.get(it.id);
           if (el) {
-            offCtx.drawImage(el, it.x, it.y, it.w, it.h);
+            ctx.drawImage(
+              el,
+              it.x - contentSize.w / 2,
+              it.y - contentSize.h / 2,
+              it.w,
+              it.h
+            );
           }
           if (drawGuides && selectedImageId === it.id) {
-            offCtx.save();
-            offCtx.strokeStyle = "#3b82f6";
-            offCtx.setLineDash([4, 3]);
-            offCtx.strokeRect(it.x, it.y, it.w, it.h);
-            offCtx.setLineDash([]);
-            offCtx.fillStyle = "#3b82f6";
-            offCtx.fillRect(it.x + it.w - 6, it.y + it.h - 6, 12, 12); // resize handle
-            offCtx.restore();
+            ctx.save();
+            ctx.strokeStyle = "#3b82f6";
+            ctx.setLineDash([4, 3]);
+            ctx.strokeRect(
+              it.x - contentSize.w / 2,
+              it.y - contentSize.h / 2,
+              it.w,
+              it.h
+            );
+            ctx.setLineDash([]);
+            ctx.fillStyle = "#3b82f6";
+            ctx.fillRect(
+              it.x + it.w - contentSize.w / 2 - 6,
+              it.y + it.h - contentSize.h / 2 - 6,
+              12,
+              12
+            );
+            ctx.restore();
           }
         }
         for (const t of state.texts) {
           const { w, h } = measureText(t);
-          const cx = t.x + w / 2;
-          const cy = t.y - h / 2;
-          offCtx.save();
-          offCtx.translate(cx, cy);
-          offCtx.rotate(radians(t.rotationDeg ?? 0));
-          offCtx.fillStyle = t.color;
-          offCtx.textBaseline = "middle";
-          offCtx.font = `${t.size}px ${t.font}`;
-          // draw centered
-          offCtx.fillText(t.text, -w / 2, 0);
+          const cx = t.x - contentSize.w / 2 + w / 2;
+          const cy = t.y - contentSize.h / 2 - h / 2;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(radians(t.rotationDeg ?? 0));
+          ctx.fillStyle = t.color;
+          ctx.textBaseline = "middle";
+          ctx.font = `${t.size}px ${t.font}`;
+          ctx.fillText(t.text || " ", -w / 2, 0);
           if (drawGuides && t.id === selectedTextId) {
-            offCtx.strokeStyle = "#ef4444";
-            offCtx.setLineDash([4, 3]);
-            offCtx.strokeRect(-w / 2, -h / 2, w, h);
-            offCtx.setLineDash([]);
-            // rotate handle (circle above)
-            offCtx.beginPath();
-            offCtx.arc(0, -h / 2 - 16, 6, 0, Math.PI * 2);
-            offCtx.fillStyle = "#ef4444";
-            offCtx.fill();
-            // resize handle (square bottom-right)
-            offCtx.fillStyle = "#ef4444";
-            offCtx.fillRect(w / 2 - 6, h / 2 - 6, 12, 12);
+            ctx.strokeStyle = "#ef4444";
+            ctx.setLineDash([4, 3]);
+            ctx.strokeRect(-w / 2, -h / 2, w, h);
+            ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.arc(0, -h / 2 - 16, 6, 0, Math.PI * 2);
+            ctx.fillStyle = "#ef4444";
+            ctx.fill();
+            ctx.fillStyle = "#ef4444";
+            ctx.fillRect(w / 2 - 6, h / 2 - 6, 12, 12);
           }
-          offCtx.restore();
+          ctx.restore();
         }
-        offCtx.lineJoin = "round";
-        offCtx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
         for (const s of state.strokes) {
           if (s.points.length < 2) {
-            offCtx.fillStyle = s.color;
-            offCtx.beginPath();
-            offCtx.arc(
-              s.points[0].x,
-              s.points[0].y,
+            ctx.fillStyle = s.color;
+            ctx.beginPath();
+            ctx.arc(
+              s.points[0].x - contentSize.w / 2,
+              s.points[0].y - contentSize.h / 2,
               s.size / 2,
               0,
               Math.PI * 2
             );
-            offCtx.fill();
+            ctx.fill();
             continue;
           }
-          offCtx.strokeStyle = s.color;
-          offCtx.lineWidth = s.size;
-          offCtx.beginPath();
-          offCtx.moveTo(s.points[0].x, s.points[0].y);
+          ctx.strokeStyle = s.color;
+          ctx.lineWidth = s.size;
+          ctx.beginPath();
+          ctx.moveTo(
+            s.points[0].x - contentSize.w / 2,
+            s.points[0].y - contentSize.h / 2
+          );
           for (let i = 1; i < s.points.length; i++) {
-            offCtx.lineTo(s.points[i].x, s.points[i].y);
+            ctx.lineTo(
+              s.points[i].x - contentSize.w / 2,
+              s.points[i].y - contentSize.h / 2
+            );
           }
-          offCtx.stroke();
+          ctx.stroke();
         }
-        const bounds = rotatedBounds(off.width, off.height, angle);
-        const outW = Math.ceil(bounds.width);
-        const outH = Math.ceil(bounds.height);
-        canvas.width = outW;
-        canvas.height = outH;
-        const size = 16;
-        for (let y = 0; y < outH; y += size) {
-          for (let x = 0; x < outW; x += size) {
-            ctx.fillStyle =
-              ((x / size + y / size) | 0) % 2 ? "#f8f8f8" : "#efefef";
-            ctx.fillRect(x, y, size, size);
-          }
-        }
-        ctx.save();
-        ctx.translate(outW / 2, outH / 2);
-        ctx.rotate(angle);
-        ctx.drawImage(off, -off.width / 2, -off.height / 2);
         ctx.restore();
       },
       [
@@ -903,81 +923,94 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
         selectedImageId,
         state,
         contentSize,
+        getImageBounds,
       ]
     );
+
     const getDataURL = useCallback(
       (type: "png" | "jpeg") => {
-        const angle = radians(state.rotationDeg);
-        const { w: cw, h: ch } = contentSize;
-        // Compose offscreen (unrotated)
+        const canvas = canvasRef.current;
+        if (!canvas) return "";
+        const { w, h } = getImageBounds();
         const off = document.createElement("canvas");
-        off.width = Math.max(1, cw);
-        off.height = Math.max(1, ch);
+        off.width = w;
+        off.height = h;
         const offCtx = off.getContext("2d")!;
         offCtx.fillStyle = state.bgColor;
-        offCtx.fillRect(0, 0, off.width, off.height);
-        if (image)
-          offCtx.drawImage(image, state.padding.left, state.padding.top);
+        offCtx.fillRect(0, 0, w, h);
+        if (image) {
+          offCtx.drawImage(image, 0, 0, w, h);
+        }
         for (const it of state.images) {
           const el = imageMapRef.current.get(it.id);
-          if (el) offCtx.drawImage(el, it.x, it.y, it.w, it.h);
+          if (el) {
+            const relX = it.x;
+            const relY = it.y;
+            if (
+              relX >= 0 &&
+              relX + it.w <= w &&
+              relY >= 0 &&
+              relY + it.h <= h
+            ) {
+              offCtx.drawImage(el, relX, relY, it.w, it.h);
+            }
+          }
         }
-        // (update texts loop accordingly)
         for (const t of state.texts) {
-          const { w, h } = measureText(t);
-          const cx = t.x + w / 2;
-          const cy = t.y - h / 2;
-          offCtx.save();
-          offCtx.translate(cx, cy);
-          offCtx.rotate(radians(t.rotationDeg ?? 0));
-          offCtx.fillStyle = t.color;
-          offCtx.textBaseline = "middle";
-          offCtx.font = `${t.size}px ${t.font}`;
-          offCtx.fillText(t.text, -w / 2, 0);
-          offCtx.restore();
+          const { w: tw, h: th } = measureText(t);
+          const cx = t.x + tw / 2;
+          const cy = t.y - th / 2;
+          if (
+            cx - tw / 2 >= 0 &&
+            cx + tw / 2 <= w &&
+            cy - th / 2 >= 0 &&
+            cy + th / 2 <= h
+          ) {
+            offCtx.save();
+            offCtx.translate(cx, cy);
+            offCtx.rotate(radians(t.rotationDeg ?? 0));
+            offCtx.fillStyle = t.color;
+            offCtx.textBaseline = "middle";
+            offCtx.font = `${t.size}px ${t.font}`;
+            offCtx.fillText(t.text || " ", -tw / 2, 0);
+            offCtx.restore();
+          }
         }
-        // Draw strokes above image and text
-        offCtx.lineJoin = "round";
-        offCtx.lineCap = "round";
+        offCtx.lineJoin = "round"; // Changed from ctx to offCtx
+        offCtx.lineCap = "round"; // Changed from ctx to offCtx
         for (const s of state.strokes) {
-          if (s.points.length < 2) {
-            offCtx.fillStyle = s.color;
-            offCtx.beginPath();
+          const pointsInBounds = s.points.filter(
+            (p) => p.x >= 0 && p.x <= w && p.y >= 0 && p.y <= h
+          );
+          if (pointsInBounds.length < 1) continue;
+          if (pointsInBounds.length === 1) {
+            offCtx.fillStyle = s.color; // Changed from ctx to offCtx
+            offCtx.beginPath(); // Changed from ctx to offCtx
             offCtx.arc(
-              s.points[0].x,
-              s.points[0].y,
+              // Changed from ctx to offCtx
+              pointsInBounds[0].x,
+              pointsInBounds[0].y,
               s.size / 2,
               0,
               Math.PI * 2
             );
-            offCtx.fill();
+            offCtx.fill(); // Changed from ctx to offCtx
           } else {
-            offCtx.strokeStyle = s.color;
-            offCtx.lineWidth = s.size;
-            offCtx.beginPath();
-            offCtx.moveTo(s.points[0].x, s.points[0].y);
-            for (let i = 1; i < s.points.length; i++)
-              offCtx.lineTo(s.points[i].x, s.points[i].y);
-            offCtx.stroke();
+            offCtx.strokeStyle = s.color; // Changed from ctx to offCtx
+            offCtx.lineWidth = s.size; // Changed from ctx to offCtx
+            offCtx.beginPath(); // Changed from ctx to offCtx
+            offCtx.moveTo(pointsInBounds[0].x, pointsInBounds[0].y); // Changed from ctx to offCtx
+            for (let i = 1; i < pointsInBounds.length; i++) {
+              offCtx.lineTo(pointsInBounds[i].x, pointsInBounds[i].y); // Changed from ctx to offCtx
+            }
+            offCtx.stroke(); // Changed from ctx to offCtx
           }
         }
-        // Rotate into a final export canvas
-        const bounds = rotatedBounds(off.width, off.height, angle);
-        const outW = Math.ceil(bounds.width);
-        const outH = Math.ceil(bounds.height);
-        const exportCanvas = document.createElement("canvas");
-        exportCanvas.width = outW;
-        exportCanvas.height = outH;
-        const ctx = exportCanvas.getContext("2d")!;
-        ctx.save();
-        ctx.translate(outW / 2, outH / 2);
-        ctx.rotate(angle);
-        ctx.drawImage(off, -off.width / 2, -off.height / 2);
-        ctx.restore();
-        return exportCanvas.toDataURL(`image/${type}`);
+        return off.toDataURL(`image/${type}`);
       },
-      [image, contentSize, state, measureText]
+      [image, state, measureText, getImageBounds]
     );
+
     const download = useCallback(
       (type: "png" | "jpeg") => {
         const dataURL = getDataURL(type);
@@ -990,80 +1023,45 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       },
       [getDataURL]
     );
+
     const onCanvasWheel = useCallback(
       (e: React.WheelEvent<HTMLCanvasElement>) => {
+        e.preventDefault();
         if (activeTool === "image" && selectedImageId) {
-          e.preventDefault();
           const factor = e.deltaY > 0 ? 0.95 : 1.05;
-          scaleSelectedImage(factor);
+          scaleImage(selectedImageId, factor);
+        } else if (activeTool === "text" && selectedTextId) {
+          const t = state.texts.find((x) => x.id === selectedTextId);
+          if (!t) return;
+          const factor = e.deltaY > 0 ? 0.95 : 1.05;
+          const newSize = Math.max(
+            8,
+            Math.min(256, Math.round(t.size * factor))
+          );
+          updateText(t.id, { size: newSize });
         }
       },
-      [activeTool, selectedImageId]
+      [
+        activeTool,
+        selectedImageId,
+        selectedTextId,
+        state.texts,
+        scaleImage,
+        updateText,
+      ]
     );
-    const scaleSelectedImage = useCallback(
-      (factor: number) => {
-        if (!selectedImageId) return;
-        const it = state.images.find((x) => x.id === selectedImageId);
-        if (!it) return;
-        const { w: cw, h: ch } = contentSize;
-        const newW = Math.max(16, Math.round(it.w * factor));
-        const newH = Math.max(16, Math.round(it.h * factor));
-        const clampedW = Math.min(newW, cw - it.x);
-        const clampedH = Math.min(newH, ch - it.y);
-        const nextImages = state.images.map((x) =>
-          x.id === it.id ? { ...x, w: clampedW, h: clampedH } : x
-        );
-        pushHistory({ ...state, images: nextImages });
-      },
-      [contentSize, pushHistory, selectedImageId, state]
-    );
-    const bringForward = useCallback(() => {
-      if (!selectedImageId) return;
-      const idx = state.images.findIndex((i) => i.id === selectedImageId);
-      if (idx < 0 || idx === state.images.length - 1) return;
-      const arr = [...state.images];
-      const [item] = arr.splice(idx, 1);
-      arr.push(item);
-      pushHistory({ ...state, images: arr });
-    }, [selectedImageId, state, pushHistory]);
-    const sendBackward = useCallback(() => {
-      if (!selectedImageId) return;
-      const idx = state.images.findIndex((i) => i.id === selectedImageId);
-      if (idx <= 0) return;
-      const arr = [...state.images];
-      const [item] = arr.splice(idx, 1);
-      arr.unshift(item);
-      pushHistory({ ...state, images: arr });
-    }, [selectedImageId, state, pushHistory]);
-    const selectedText = useMemo(
-      () => state.texts.find((t) => t.id === selectedTextId) || null,
-      [selectedTextId, state.texts]
-    );
-    const selectedImage = useMemo(
-      () => state.images.find((i) => i.id === selectedImageId) || null,
-      [selectedImageId, state.images]
-    );
-    const imageScalePct = useMemo(() => {
-      if (!selectedImage) return 100;
-      const el = imageMapRef.current.get(selectedImage.id);
-      if (!el) return 100;
-      return Math.max(1, Math.round((selectedImage.w / el.naturalWidth) * 100));
-    }, [selectedImage]);
-    // Helper for selected image updates and scaling
-    const updateSelectedImage = useCallback(
-      (partial: Partial<ImageItem>) => {
-        if (!selectedImageId) return;
-        const nextImages = state.images.map((it) =>
-          it.id === selectedImageId ? { ...it, ...partial } : it
-        );
-        pushHistory({ ...state, images: nextImages });
-      },
-      [pushHistory, selectedImageId, state]
-    );
+
+    const getSelectedText = useCallback(() => {
+      return state.texts.find((t) => t.id === selectedTextId) || null;
+    }, [selectedTextId, state.texts]);
+
+    const getSelectedImage = useCallback(() => {
+      return state.images.find((i) => i.id === selectedImageId) || null;
+    }, [selectedImageId, state.images]);
+
     useEffect(() => {
       const onKey = (e: KeyboardEvent) => {
         if (!image) return;
-        // Undo / Redo
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
           e.preventDefault();
           if (e.shiftKey) redo();
@@ -1075,14 +1073,13 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
           redo();
           return;
         }
-        // Deselect
         if (e.key === "Escape") {
           setSelectedTextId(null);
           setSelectedImageId(null);
+          setEditingTextId(null);
           return;
         }
         const step = e.shiftKey ? 10 : 1;
-        // Nudge image selection
         if (selectedImageId) {
           const it = stateRef.current.images.find(
             (x) => x.id === selectedImageId
@@ -1107,27 +1104,19 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
           }
           if (e.key === "Delete" || e.key === "Backspace") {
             e.preventDefault();
-            const next = {
-              ...stateRef.current,
-              images: stateRef.current.images.filter((img) => img.id !== it.id),
-            };
-            pushHistory(next);
-            setSelectedImageId(null);
+            removeImage(it.id);
             return;
           }
         }
-        // Nudge text selection
         if (selectedTextId) {
           const t = stateRef.current.texts.find((x) => x.id === selectedTextId);
           if (!t) return;
           let { x, y } = t;
           const h = t.size;
           if (e.key === "ArrowLeft") x = Math.max(0, x - step);
-          if (e.key === "ArrowRight")
-            x = Math.min(imageNatural?.w ?? x, x + step);
+          if (e.key === "ArrowRight") x = Math.min(contentSize.w, x + step);
           if (e.key === "ArrowUp") y = Math.max(h, y - step);
-          if (e.key === "ArrowDown")
-            y = Math.min(imageNatural?.h ?? y, y + step);
+          if (e.key === "ArrowDown") y = Math.min(contentSize.h, y + step);
           if (
             ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].some((k) =>
               e.key.includes(k)
@@ -1140,14 +1129,9 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
             pushHistory({ ...stateRef.current, texts: nextTexts });
             return;
           }
-          if (e.key === "Delete" || e.key === "Backspace") {
+          if (e.key === "Delete" || (e.key === "Backspace" && !editingTextId)) {
             e.preventDefault();
-            const next = {
-              ...stateRef.current,
-              texts: stateRef.current.texts.filter((txt) => txt.id !== t.id),
-            };
-            pushHistory(next);
-            setSelectedTextId(null);
+            removeText(t.id);
           }
         }
       };
@@ -1159,40 +1143,91 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
       undo,
       selectedImageId,
       selectedTextId,
-      contentSize,
-      imageNatural,
       pushHistory,
+      editingTextId,
+      removeText,
+      removeImage,
+      contentSize,
     ]);
+
     useEffect(() => {
       drawBaseCanvas(true);
     }, [drawBaseCanvas]);
+
     useImperativeHandle(
       ref,
       () => ({
         openBasePicker: () => baseInputRef.current?.click(),
         openImagesPicker: () => imagesInputRef.current?.click(),
         setTool: (tool: Tool) => setActiveTool(tool),
-        addText: () => addText(),
-        rotateBy: (delta: number) => rotateBy(delta),
-        addSpace: () => addSpace(),
-        undo: () => undo(),
-        redo: () => redo(),
-        downloadPNG: () => download("png"),
-        downloadJPEG: () => download("jpeg"),
-        loadTemplate: (url: string) => loadTemplate(url),
-        getDataURL: (type: "png" | "jpeg") => getDataURL(type),
-      }),
-      [
+        setBrushColor: (color: string) => setBrushColor(color),
+        setBrushSize: (size: number) => setBrushSize(size),
+        addText,
+        updateText,
+        removeText,
+        clearStrokes,
+        rotateBy,
         undo,
         redo,
-        rotateBy,
-        addSpace,
+        downloadPNG: () => download("png"),
+        downloadJPEG: () => download("jpeg"),
+        loadTemplate,
+        getDataURL,
+        scaleImage,
+        bringForwardImage,
+        sendBackwardImage,
+        resetImageSize,
+        getSelectedText,
+        getSelectedImage,
+        removeImage,
+      }),
+      [
         addText,
+        updateText,
+        removeText,
+        clearStrokes,
+        rotateBy,
+        undo,
+        redo,
         download,
         loadTemplate,
         getDataURL,
+        scaleImage,
+        bringForwardImage,
+        sendBackwardImage,
+        resetImageSize,
+        getSelectedText,
+        getSelectedImage,
+        removeImage,
       ]
     );
+
+    const getTextInputPosition = useCallback(
+      (text: TextItem) => {
+        if (!canvasRef.current) return { top: 0, left: 0 };
+        const rect = canvasRef.current.getBoundingClientRect();
+        const { w, h } = measureText(text);
+        const angle = radians(state.rotationDeg + (text.rotationDeg ?? 0));
+        const cx = text.x + w / 2;
+        const cy = text.y - h / 2;
+        const canvasCenterX = contentSize.w / 2;
+        const canvasCenterY = contentSize.h / 2;
+        const dx = cx - canvasCenterX;
+        const dy = cy - canvasCenterY;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const screenX = dx * cos - dy * sin + canvasCenterX;
+        const screenY = dx * sin + dy * cos + canvasCenterY;
+        const scaleX = rect.width / contentSize.w;
+        const scaleY = rect.height / contentSize.h;
+        return {
+          left: rect.left + screenX * scaleX - (w * scaleX) / 2,
+          top: rect.top + screenY * scaleY - (h * scaleY) / 2,
+        };
+      },
+      [measureText, state.rotationDeg, contentSize]
+    );
+
     return (
       <section className="rounded-lg border bg-card p-3 md:p-4">
         <input
@@ -1215,9 +1250,12 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
           tabIndex={-1}
         />
         {controls === "internal" && (
-          <>
-            <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="flex flex-wrap items-center gap-2">
               <label className="inline-flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  Base Image
+                </span>
                 <Input
                   type="file"
                   accept="image/*"
@@ -1225,12 +1263,13 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
                   className="w-auto cursor-pointer"
                 />
               </label>
-              <div className="h-6 w-px bg-border" />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant={activeTool === "text" ? "default" : "secondary"}
                 onClick={() => setActiveTool("text")}
                 disabled={!image}
-                aria-pressed={activeTool === "text"}
+                title="Add and edit text"
               >
                 Text
               </Button>
@@ -1238,398 +1277,82 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
                 variant={activeTool === "draw" ? "default" : "secondary"}
                 onClick={() => setActiveTool("draw")}
                 disabled={!image}
-                aria-pressed={activeTool === "draw"}
+                title="Draw freehand"
               >
                 Draw
-              </Button>
-              <Button
-                variant={activeTool === "rotate" ? "default" : "secondary"}
-                onClick={() => setActiveTool("rotate")}
-                disabled={!image}
-                aria-pressed={activeTool === "rotate"}
-              >
-                Rotate Canvas
-              </Button>
-              <Button
-                variant={activeTool === "space" ? "default" : "secondary"}
-                onClick={() => setActiveTool("space")}
-                disabled={!image}
-                aria-pressed={activeTool === "space"}
-              >
-                Add Space
-              </Button>
-              <Button
-                variant={activeTool === "download" ? "default" : "secondary"}
-                onClick={() => setActiveTool("download")}
-                disabled={!image}
-                aria-pressed={activeTool === "download"}
-              >
-                Download
               </Button>
               <Button
                 variant={activeTool === "image" ? "default" : "secondary"}
                 onClick={() => setActiveTool("image")}
                 disabled={!image}
-                aria-pressed={activeTool === "image"}
+                title="Add overlay images"
               >
                 Images
               </Button>
-              <div className="ml-auto flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  onClick={undo}
-                  disabled={!image || !canUndo}
-                >
-                  Undo
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={redo}
-                  disabled={!image || !canRedo}
-                >
-                  Redo
-                </Button>
-                <Button variant="ghost" onClick={reset} disabled={!image}>
-                  Reset
-                </Button>
-              </div>
+              <Button
+                variant={activeTool === "rotate" ? "default" : "secondary"}
+                onClick={() => setActiveTool("rotate")}
+                disabled={!image}
+                title="Rotate canvas"
+              >
+                Rotate
+              </Button>
+              <Button
+                variant={activeTool === "download" ? "default" : "secondary"}
+                onClick={() => setActiveTool("download")}
+                disabled={!image}
+                title="Download image"
+              >
+                Download
+              </Button>
             </div>
-            {/* Inline tool options row */}
-            {image && (
-              <div className="mb-3 grid gap-3">
-                {activeTool === "text" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button variant="default" size="sm" onClick={addText}>
-                      Add Text
-                    </Button>
-                    {selectedText && (
-                      <>
-                        <Input
-                          className="w-48"
-                          value={selectedText.text}
-                          onChange={(e) =>
-                            updateSelectedText({ text: e.currentTarget.value })
-                          }
-                          placeholder="Enter text"
-                        />
-                        <Input
-                          className="w-24"
-                          type="number"
-                          min={8}
-                          max={256}
-                          value={selectedText.size}
-                          onChange={(e) =>
-                            updateSelectedText({
-                              size: Number(e.currentTarget.value),
-                            })
-                          }
-                        />
-                        <Input
-                          className="w-16"
-                          type="color"
-                          value={selectedText.color}
-                          onChange={(e) =>
-                            updateSelectedText({ color: e.currentTarget.value })
-                          }
-                        />
-                        <Input
-                          className="w-56"
-                          value={selectedText.font}
-                          onChange={(e) =>
-                            updateSelectedText({ font: e.currentTarget.value })
-                          }
-                        />
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => updateSelectedText({ rotationDeg: 0 })}
-                        >
-                          Reset Text Rotation
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={removeSelectedText}
-                        >
-                          Remove
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                )}
-                {activeTool === "draw" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-muted-foreground">Brush</span>
-                    <Input
-                      type="color"
-                      value={brushColor}
-                      onChange={(e) => setBrushColor(e.currentTarget.value)}
-                    />
-                    <input
-                      type="range"
-                      min={1}
-                      max={64}
-                      value={brushSize}
-                      onChange={(e) =>
-                        setBrushSize(Number(e.currentTarget.value))
-                      }
-                    />
-                    <Button
-                      variant="secondary"
-                      onClick={clearStrokes}
-                      disabled={!state.strokes.length}
-                    >
-                      Clear Drawings
-                    </Button>
-                  </div>
-                )}
-                {activeTool === "rotate" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      Canvas Rotation
-                    </span>
-                    <input
-                      type="range"
-                      min={-180}
-                      max={180}
-                      value={state.rotationDeg}
-                      onChange={(e) =>
-                        pushHistory({
-                          ...state,
-                          rotationDeg: Number.parseInt(
-                            e.currentTarget.value,
-                            10
-                          ),
-                        })
-                      }
-                    />
-                    <Button variant="secondary" onClick={() => rotateBy(-90)}>
-                      -90°
-                    </Button>
-                    <Button variant="secondary" onClick={() => rotateBy(90)}>
-                      +90°
-                    </Button>
-                    <Button variant="secondary" onClick={() => rotateBy(180)}>
-                      180°
-                    </Button>
-                  </div>
-                )}
-                {activeTool === "space" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      Padding
-                    </span>
-                    <Input
-                      className="w-20"
-                      type="number"
-                      min={0}
-                      max={2000}
-                      value={state.padding.top}
-                      onChange={(e) =>
-                        updatePadding("top", Number(e.currentTarget.value))
-                      }
-                    />
-                    <Input
-                      className="w-20"
-                      type="number"
-                      min={0}
-                      max={2000}
-                      value={state.padding.right}
-                      onChange={(e) =>
-                        updatePadding("right", Number(e.currentTarget.value))
-                      }
-                    />
-                    <Input
-                      className="w-20"
-                      type="number"
-                      min={0}
-                      max={2000}
-                      value={state.padding.bottom}
-                      onChange={(e) =>
-                        updatePadding("bottom", Number(e.currentTarget.value))
-                      }
-                    />
-                    <Input
-                      className="w-20"
-                      type="number"
-                      min={0}
-                      max={2000}
-                      value={state.padding.left}
-                      onChange={(e) =>
-                        updatePadding("left", Number(e.currentTarget.value))
-                      }
-                    />
-                    <span className="text-xs text-muted-foreground">
-                      Background
-                    </span>
-                    <Input
-                      type="color"
-                      value={state.bgColor}
-                      onChange={(e) =>
-                        pushHistory({
-                          ...state,
-                          bgColor: e.currentTarget.value,
-                        })
-                      }
-                    />
-                  </div>
-                )}
-                {activeTool === "download" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button variant="default" onClick={() => download("png")}>
-                      Download PNG
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => download("jpeg")}
-                    >
-                      Download JPEG
-                    </Button>
-                  </div>
-                )}
-                {activeTool === "image" && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                      Add Images
-                      <Input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        onChange={onAddImages}
-                        className="w-auto"
-                      />
-                    </label>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => {
-                        if (!selectedImageId) return;
-                        const next = {
-                          ...state,
-                          images: state.images.filter(
-                            (i) => i.id !== selectedImageId
-                          ),
-                        };
-                        pushHistory(next);
-                        setSelectedImageId(null);
-                      }}
-                      disabled={!selectedImageId}
-                    >
-                      Remove Selected
-                    </Button>
-                    {selectedImage && (
-                      <>
-                        <span className="text-xs text-muted-foreground">
-                          Scale
-                        </span>
-                        <input
-                          aria-label="Scale selected image"
-                          type="range"
-                          min={10}
-                          max={300}
-                          value={imageScalePct}
-                          onChange={(e) => {
-                            const pct = Number(e.currentTarget.value);
-                            const el = imageMapRef.current.get(
-                              selectedImage.id
-                            );
-                            const natW = el?.naturalWidth || selectedImage.w;
-                            const natH = el?.naturalHeight || selectedImage.h;
-                            const scale = Math.max(0.1, Math.min(3, pct / 100));
-                            const { w: cw, h: ch } = contentSize;
-                            const newW = Math.max(16, Math.round(natW * scale));
-                            const newH = Math.max(16, Math.round(natH * scale));
-                            const clampedW = Math.min(
-                              newW,
-                              cw - selectedImage.x
-                            );
-                            const clampedH = Math.min(
-                              newH,
-                              ch - selectedImage.y
-                            );
-                            const nextImages = state.images.map((x) =>
-                              x.id === selectedImage.id
-                                ? { ...x, w: clampedW, h: clampedH }
-                                : x
-                            );
-                            pushHistory({ ...state, images: nextImages });
-                          }}
-                        />
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => scaleSelectedImage(0.9)}
-                        >
-                          -
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => scaleSelectedImage(1.1)}
-                        >
-                          +
-                        </Button>
-                        <span className="text-xs text-muted-foreground">{`${selectedImage.w}×${selectedImage.h}px`}</span>
-                        <div className="h-6 w-px bg-border" />
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={bringForward}
-                        >
-                          Bring Front
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={sendBackward}
-                        >
-                          Send Back
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const it = selectedImage;
-                            const el = imageMapRef.current.get(it.id);
-                            const natW = el?.naturalWidth || it.w;
-                            const natH = el?.naturalHeight || it.h;
-                            const { w: cw, h: ch } = contentSize;
-                            const newW = Math.min(natW, cw - it.x);
-                            const newH = Math.min(natH, ch - it.y);
-                            updateSelectedImage({ w: newW, h: newH });
-                          }}
-                        >
-                          Reset Size
-                        </Button>
-                        <span className="text-xs text-muted-foreground">
-                          Tip: use mouse wheel to resize, arrows to nudge, Shift
-                          for 10px steps
-                        </span>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </>
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={undo}
+                disabled={!image || !canUndo}
+                title="Undo last action"
+              >
+                Undo
+              </Button>
+              <Button
+                variant="outline"
+                onClick={redo}
+                disabled={!image || !canRedo}
+                title="Redo last action"
+              >
+                Redo
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={reset}
+                disabled={!image}
+                title="Reset canvas"
+              >
+                Reset
+              </Button>
+            </div>
+          </div>
         )}
         <div
           className={cn(
             "relative w-full overflow-auto rounded-md border bg-muted/50",
             "flex items-center justify-center"
           )}
-          style={{ minHeight: 500, minWidth: 500 }}
+          style={{ width: contentSize.w, height: contentSize.h }}
         >
           <canvas
             ref={canvasRef}
             className={cn(
-              "block max-w-full touch-none",
+              "block touch-none",
               activeTool === "draw"
                 ? "cursor-crosshair"
                 : activeTool === "text" || activeTool === "image"
                 ? "cursor-move"
                 : "cursor-default"
             )}
+            width={contentSize.w}
+            height={contentSize.h}
             onPointerDown={onCanvasPointerDown}
             onPointerMove={onCanvasPointerMove}
             onPointerUp={onCanvasPointerUp}
@@ -1639,10 +1362,57 @@ const CanvasEditor = forwardRef<CanvasEditorHandle, CanvasEditorProps>(
               boxShadow: "0 2px 10px rgba(0,0,0,0.1)",
             }}
           />
+          {editingTextId && (
+            <div
+              className="absolute"
+              style={{
+                ...getTextInputPosition(
+                  state.texts.find((t) => t.id === editingTextId)!
+                ),
+              }}
+            >
+              <Input
+                value={state.texts.find((t) => t.id === editingTextId)!.text}
+                onChange={(e) => {
+                  const text = e.currentTarget.value;
+                  setState((prev) => ({
+                    ...prev,
+                    texts: prev.texts.map((t) =>
+                      t.id === editingTextId ? { ...t, text } : t
+                    ),
+                  }));
+                }}
+                onBlur={() => {
+                  setEditingTextId(null);
+                  pushHistory(stateRef.current);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === "Escape") {
+                    setEditingTextId(null);
+                    pushHistory(stateRef.current);
+                  }
+                }}
+                autoFocus
+                style={{
+                  fontFamily: "Fredoka One",
+                  fontSize: `${
+                    state.texts.find((t) => t.id === editingTextId)!.size
+                  }px`,
+                  color: state.texts.find((t) => t.id === editingTextId)!.color,
+                  border: "1px solid #ef4444",
+                  background: "rgba(255, 255, 255, 0.9)",
+                  padding: "2px 4px",
+                  minWidth: "50px",
+                }}
+              />
+            </div>
+          )}
         </div>
       </section>
     );
   }
 );
+
+CanvasEditor.displayName = "CanvasEditor";
 
 export default CanvasEditor;

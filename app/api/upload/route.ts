@@ -1,15 +1,20 @@
 // app/api/upload/route.ts
 import { NextResponse } from "next/server";
-import fs from "fs/promises";
-import path from "path";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { v4 as uuidv4 } from "uuid";
-
-const uploadDir = path.join(process.cwd(), "public/uploads");
+const s3 = new S3Client({
+  region: "auto",
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+  forcePathStyle: true,
+});
+const bucketName = process.env.R2_BUCKET_NAME!;
 
 export async function POST(request: Request) {
   try {
-    await fs.mkdir(uploadDir, { recursive: true });
-
     const formData = await request.formData();
     const file = formData.get("file") as File;
 
@@ -25,11 +30,19 @@ export async function POST(request: Request) {
     }
 
     const fileName = `${uuidv4()}-${file.name}`;
-    const filePath = path.join(uploadDir, fileName);
+    const key = `uploads/${fileName}`; // Organize files in 'uploads' folder in R2
     const buffer = await file.arrayBuffer();
-    await fs.writeFile(filePath, new Uint8Array(buffer));
 
-    const publicPath = `/uploads/${fileName}`;
+    const uploadParams = {
+      Bucket: bucketName,
+      Key: key,
+      Body: new Uint8Array(buffer),
+      ContentType: file.type,
+      ACL: "public-read",
+    };
+
+    await s3.send(new PutObjectCommand(uploadParams));
+    const publicPath = `${s3.config.endpoint!.href}${bucketName}/${key}`;
 
     return NextResponse.json({ url: publicPath }, { status: 200 });
   } catch (error) {

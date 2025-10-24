@@ -367,30 +367,6 @@ header {
   height: 20px;
 }
 
-.side-panel {
-  width: 260px;
-  background-color: #ffe68c;
-  border: 2px solid #000;
-  border-radius: 15px;
-  box-shadow: 5px 5px 0 #000;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 15px;
-}
-
-.upload-search-container {
-  width: 100%;
-  background-color: #ffffff;
-  border-radius: 10px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-
 .upload-btn {
   width: 100%;
   border: 2px dashed #b73e00;
@@ -417,29 +393,6 @@ header {
   font-size: 1rem;
 }
 
-.search-box {
-  width: 100%;
-  position: relative;
-}
-
-.search-box input {
-  width: 100%;
-  border: 2px solid #000;
-  border-radius: 10px;
-  padding: 8px 35px 8px 10px;
-  font-family: "Fredoka One", cursive;
-  font-size: 0.9rem;
-}
-
-.search-box button {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  cursor: pointer;
-}
 
 /* Responsive Design */
 @media (max-width: 1200px) {
@@ -522,10 +475,6 @@ header {
     align-items: center;
   }
 
-  .side-panel {
-    width: 90%;
-    max-width: 350px;
-  }
 
   .canvas-area {
     width: 100%;
@@ -617,6 +566,7 @@ header {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin-bottom: auto;
 }
 
 .tags-section h3 {
@@ -674,28 +624,6 @@ header {
   font-size: 0.8rem;
 }
 
-
-/* Meme Generator Styles */
-.tags-section {
-  width: 100%;
-  background: #fff;
-  border-radius: 10px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.tags-section h3 {
-  margin: 0;
-  font-size: 1rem;
-}
-.tags-section select {
-  width: 100%;
-  height: 100px;
-  border: 2px solid #000;
-  border-radius: 5px;
-  font-family: "Fredoka One", cursive;
-}
 .save-btn {
   width: 100%;
   background: #f1c534;
@@ -878,22 +806,6 @@ header.header {
   flex-direction: column;
   align-items: center;
   gap: 10px;
-}
-.upload-btn {
-  width: 100%;
-  border: 2px dashed #b73e00;
-  background: #fff8e6;
-  font-family: "Fredoka One", cursive;
-  font-weight: normal;
-  border-radius: 10px;
-  padding: 10px;
-  font-size: 0.8rem;
-  color: #b73e00;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
 }
 .or-divider {
   font-size: 1rem;

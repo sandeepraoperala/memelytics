@@ -1,3 +1,4 @@
+// app/api/users/[walletAddress]/route.ts
 import { NextResponse, NextRequest } from "next/server";
 import dbConnect from "../../../../lib/mongodb";
 

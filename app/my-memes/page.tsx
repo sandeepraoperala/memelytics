@@ -1,3 +1,4 @@
+// /app/my-memes/pages.tsx
 "use client";
 
 import { useCallback, useState, useEffect } from "react";
@@ -5,6 +6,7 @@ import { useWalletAuth } from "../../lib/auth";
 import { useAppKit } from "@reown/appkit/react";
 import { AppKitButton } from "@reown/appkit/react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 
 interface Meme {
   _id: string;
@@ -20,6 +22,7 @@ export default function MyMemesPage() {
   const { open } = useAppKit();
   const [memes, setMemes] = useState<Meme[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   const fetchMemes = useCallback(async () => {
     try {
@@ -41,7 +44,7 @@ export default function MyMemesPage() {
   useEffect(() => {
     if (!address) return;
     fetchMemes();
-  }, [address, fetchMemes]);
+  }, [address]);
 
   const downloadMeme = async (imageUrl: string, memeId: string) => {
     try {
@@ -104,8 +107,17 @@ export default function MyMemesPage() {
   return (
     <main className="container">
       <header className="header">
-        <div className="logo">
-          <Image src="/logo.png" alt="logo" width={210} height={40} />
+        <div
+          className="logo"
+          onClick={() => router.push("/")}
+          style={{ cursor: "pointer" }}
+        >
+          <Image
+            src="/logo.png"
+            alt="Memelytics logo"
+            width={210}
+            height={40}
+          />
         </div>
         <div className="header-buttons">
           <div
@@ -122,7 +134,7 @@ export default function MyMemesPage() {
       </header>
 
       <div className="trending-toggle">
-        <h2>My Created Memes</h2>
+        <h2>My Memes</h2>
         {error && (
           <div
             className="error-message"
@@ -141,8 +153,8 @@ export default function MyMemesPage() {
               <Image
                 src={meme.imageUrl}
                 alt="My Meme"
-                width={300} // Adjust based on your design
-                height={300} // Adjust based on your design
+                width={300}
+                height={300}
                 style={{ objectFit: "cover" }}
               />
               <div className="meme-actions">

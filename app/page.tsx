@@ -60,7 +60,11 @@ export default function HomePage() {
     <main className="container">
       <header className="header">
         <div className="left-header">
-          <div className="logo">
+          <div
+            className="logo"
+            onClick={() => router.push("/")}
+            style={{ cursor: "pointer" }}
+          >
             <img src="/logo.png" alt="Memelytics logo" />
           </div>
           <div className="search-bar">

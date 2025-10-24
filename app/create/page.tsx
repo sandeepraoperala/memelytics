@@ -47,7 +47,11 @@ export default function CreatePage() {
     <main className="container">
       <header className="header">
         <div className="left-header">
-          <div className="logo">
+          <div
+            className="logo"
+            onClick={() => router.push("/")}
+            style={{ cursor: "pointer" }}
+          >
             <Image
               src="/logo.png"
               alt="Memelytics logo"
@@ -81,15 +85,15 @@ export default function CreatePage() {
         </div>
         <div
           className="option-card"
-          onClick={() => handleNavigation("gif")}
+          // onClick={() => handleNavigation("gif")}
           style={{ cursor: "pointer" }}
         >
           <Image src="/gif.png" alt="Make a GIF" width={120} height={120} />
-          <span>Make a GIF</span>
+          <span>Make a GIF (Coming Soon)</span>
         </div>
         <div
           className="option-card"
-          onClick={() => handleNavigation("ai")}
+          // onClick={() => handleNavigation("ai")}
           style={{ cursor: "pointer" }}
         >
           <Image src="/meme.png" alt="AI Meme" width={120} height={120} />
